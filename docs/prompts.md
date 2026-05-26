@@ -38,6 +38,7 @@ Inside it, generate markdown and JSON files such as:
 - `README.md`
 - `summary.md`
 - `manifest.json`
+- `bundle_qa.json`
 - `redaction-report.md`
 - `filesystem/`
 - `runtime/`
@@ -45,7 +46,11 @@ Inside it, generate markdown and JSON files such as:
 - `containers/`
 - `apps/`
 - `data/`
+- `edge/`
+- `graphs/`
 - `operations/`
+- `packages/`
+- `review-pack/`
 - `versions/`
 - `recommendations.md`
 
@@ -60,6 +65,8 @@ After generating it:
 2. Scan archive member names for obvious secret/heavy paths.
 3. Scan included text for unredacted secret-looking assignments.
 4. Report the final archive path, size, included sections, exclusions, and anything that could not be read due to permissions.
+
+Use `manifest.json`, `bundle_qa.json`, `review-pack/checklists.json`, and Mermaid files under `graphs/` as the primary reviewer contract before free-form inference.
 
 Do not delete the generated output unless I explicitly ask.
 ```

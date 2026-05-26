@@ -12,7 +12,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__
+from .parsers import (
+    parse_compose_projects,
+    parse_go_mod_dependencies,
+    parse_package_json,
+    parse_pyproject_dependencies,
+    parse_ss_listeners,
+    parse_systemd_timers,
+    parse_systemd_units,
+    parse_tabular_packages,
+    render_service_graph,
+)
 from .redaction import read_small_text, redact_text, should_prune_dir
+from .review_pack import build_agent_context, build_review_checklists
+from .schema import SCHEMA_VERSION, mode_policy_for
 
 
 CONFIG_NAME_RE = re.compile(
@@ -48,10 +61,13 @@ class HostMapper:
     def __init__(self, options: HostmapOptions) -> None:
         self.options = options
         self.output_dir = options.output_root / options.timestamp
+        self.mode_policy = mode_policy_for(options.mode)
         self.manifest: dict = {
+            "schema_version": SCHEMA_VERSION,
             "hostmap_version": __version__,
             "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
             "mode": options.mode,
+            "mode_policy": self.mode_policy,
             "hostname": platform.node(),
             "files": [],
             "commands": [],
@@ -74,9 +90,14 @@ class HostMapper:
         self.collect_runtime()
         self.collect_filesystem_maps()
         self.collect_tool_matrices()
-        if self.options.mode != "paranoid":
+        if self.mode_policy["include_configs"]:
             self.collect_configs()
+        if self.mode_policy["include_git_metadata"]:
             self.collect_git_and_ci()
+        self.write_review_pack()
+        zip_path = self.build_zip() if self.options.create_zip else None
+        self.write_bundle_qa(zip_path)
+        self.write_text("recommendations.md", self.recommendations())
         self.write_json("manifest.json", self.manifest)
         self.write_text("summary.md", self.summary())
         zip_path = self.build_zip() if self.options.create_zip else None
@@ -144,9 +165,10 @@ class HostMapper:
             "rpm -qa --qf '%{NAME}\\t%{VERSION}-%{RELEASE}\\n' 2>/dev/null | sort || true",
             "pacman -Q 2>/dev/null | sort || true",
         ]
-        self.write_text("versions/packages.txt", "\n".join(
-            f"$ {cmd}\n{self.run_command('packages', cmd, timeout=120)}" for cmd in package_cmds
-        ))
+        package_outputs = [self.run_command("packages", cmd, timeout=120) for cmd in package_cmds]
+        self.write_text("versions/packages.txt", "\n".join(f"$ {cmd}\n{output}" for cmd, output in zip(package_cmds, package_outputs)))
+        installed_packages = parse_tabular_packages("\n".join(package_outputs))
+        self.write_json("packages/installed.json", installed_packages)
 
     def collect_runtime(self) -> None:
         commands = {
@@ -158,12 +180,16 @@ class HostMapper:
             "runtime/processes.txt": "ps -eo pid,ppid,user,stat,comm,args --sort=comm 2>&1 || true",
             "runtime/cron.txt": "find /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.monthly /etc/cron.weekly -maxdepth 2 -type f -print 2>/dev/null | sort || true",
             "runtime/filesystems.txt": "df -hT 2>&1 && printf '\\n' && findmnt -D -o SOURCE,FSTYPE,SIZE,USED,AVAIL,USE%,TARGET 2>&1 || true",
-            "containers/docker.txt": "docker compose ls 2>&1 || true; printf '\\n'; docker ps --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' 2>&1 || true; printf '\\n'; docker system df 2>&1 || true",
+            "containers/docker.txt": "docker compose ls --format json 2>&1 || true",
             "containers/podman.txt": "podman ps --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' 2>&1 || true",
             "containers/kubernetes.txt": "kubectl get nodes,pods,svc -A -o wide 2>&1 || true; printf '\\n'; k3s kubectl get nodes,pods,svc -A -o wide 2>&1 || true",
         }
+        outputs: dict[str, str] = {}
         for rel, cmd in commands.items():
-            self.write_text(rel, f"$ {cmd}\n{self.run_command(rel, cmd, timeout=120)}")
+            output = self.run_command(rel, cmd, timeout=120)
+            outputs[rel] = output
+            self.write_text(rel, f"$ {cmd}\n{output}")
+        self.write_runtime_structures(outputs)
 
     def collect_filesystem_maps(self) -> None:
         self.write_text(
@@ -270,15 +296,32 @@ class HostMapper:
     def collect_git_and_ci(self) -> None:
         repos = self.find_git_repos()
         rows = ["| Repository | State | Last commit | Remote |\n", "|---|---|---|---|\n"]
+        repo_entries: list[dict] = []
+        declared_packages: list[dict] = []
         for repo in repos:
             qrepo = sh_quote(repo)
             state = self.run_command("git-status", f"git -C {qrepo} status --short --branch 2>&1 | head -30", timeout=20).strip().replace("\n", "<br>")
             last = self.run_command("git-log", f"git -C {qrepo} log -1 --format='%H %ci %s' 2>&1", timeout=20).strip()
             remote = self.run_command("git-remote", f"git -C {qrepo} remote -v 2>&1", timeout=20).strip().replace("\n", "<br>")
             rows.append(f"| `{repo}` | {state} | {last} | {remote} |\n")
-            self.copy_ci_files(repo)
-            self.copy_deploy_files(repo)
+            ci_files = self.copy_ci_files(repo)
+            deploy_files = self.copy_deploy_files(repo)
+            package_manifests, packages = self.collect_declared_packages(repo)
+            declared_packages.extend(packages)
+            repo_entries.append(
+                {
+                    "path": str(repo),
+                    "state": state,
+                    "last_commit": last,
+                    "remote": remote,
+                    "ci_files": [str(path.relative_to(repo)) for path in ci_files],
+                    "deploy_files": [str(path.relative_to(repo)) for path in deploy_files],
+                    "package_manifests": [str(path.relative_to(repo)) for path in package_manifests],
+                }
+            )
         self.write_text("apps/repositories.md", "".join(rows))
+        self.write_json("apps/repositories.json", repo_entries)
+        self.write_json("packages/declared.json", declared_packages)
 
     def find_git_repos(self) -> list[Path]:
         roots = [Path("/home"), Path("/opt"), Path("/srv"), Path("/var/www")]
@@ -301,7 +344,8 @@ class HostMapper:
                 self.manifest["skipped"].append({"path": str(root), "reason": str(exc)})
         return sorted(set(repos))
 
-    def copy_ci_files(self, repo: Path) -> None:
+    def copy_ci_files(self, repo: Path) -> list[Path]:
+        copied: list[Path] = []
         candidates = [
             repo / ".github",
             repo / ".gitea",
@@ -313,15 +357,19 @@ class HostMapper:
         for candidate in candidates:
             if candidate.is_file():
                 self.copy_redacted(candidate, f"apps/ci-files/{safe_rel(repo)}")
+                copied.append(candidate)
             elif candidate.is_dir():
                 try:
                     for path in candidate.rglob("*"):
                         if is_small_file(path):
                             self.copy_redacted(path, f"apps/ci-files/{safe_rel(repo)}")
+                            copied.append(path)
                 except OSError as exc:
                     self.manifest["skipped"].append({"path": str(candidate), "reason": str(exc)})
+        return copied
 
-    def copy_deploy_files(self, repo: Path) -> None:
+    def copy_deploy_files(self, repo: Path) -> list[Path]:
+        copied: list[Path] = []
         try:
             for current, dirs, files in os.walk(repo, topdown=True, followlinks=False):
                 current_path = Path(current)
@@ -337,8 +385,38 @@ class HostMapper:
                         continue
                     if CONFIG_NAME_RE.search(path.name) and DEPLOY_FILE_RE.search(str(rel)):
                         self.copy_redacted(path, f"apps/deploy-files/{safe_rel(repo)}")
+                        copied.append(path)
         except OSError as exc:
             self.manifest["skipped"].append({"path": str(repo), "reason": str(exc)})
+        return copied
+
+    def collect_declared_packages(self, repo: Path) -> tuple[list[Path], list[dict]]:
+        manifests: list[Path] = []
+        packages: list[dict] = []
+        candidates = {
+            "package.json": parse_package_json,
+            "pyproject.toml": parse_pyproject_dependencies,
+            "go.mod": parse_go_mod_dependencies,
+        }
+        try:
+            for current, dirs, files in os.walk(repo, topdown=True, followlinks=False):
+                current_path = Path(current)
+                dirs[:] = sorted(d for d in dirs if not should_prune_dir(current_path / d))
+                rel_dir = current_path.relative_to(repo)
+                if len(rel_dir.parts) > 2:
+                    dirs[:] = []
+                    continue
+                for name in sorted(files):
+                    parser = candidates.get(name)
+                    if parser is None:
+                        continue
+                    path = current_path / name
+                    manifests.append(path)
+                    for item in parser(path):
+                        packages.append({"repo": str(repo), **item})
+        except OSError as exc:
+            self.manifest["skipped"].append({"path": str(repo), "reason": str(exc)})
+        return manifests, packages
 
     def copy_redacted(self, path: Path, prefix: str) -> None:
         text = read_small_text(path)
@@ -354,7 +432,7 @@ class HostMapper:
             zip_path.unlink()
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
             for path in sorted(self.output_dir.rglob("*")):
-                if path.is_file():
+                if path.is_file() and path.name != "ARCHIVE_SIZE.txt":
                     zf.write(path, path.relative_to(self.output_dir))
         size = zip_path.stat().st_size
         if size > self.options.max_zip_mb * 1024 * 1024:
@@ -364,6 +442,96 @@ class HostMapper:
         with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
             zf.write(self.output_dir / "ARCHIVE_SIZE.txt", "ARCHIVE_SIZE.txt")
         return zip_path
+
+    def write_review_pack(self) -> None:
+        self.write_json("review-pack/checklists.json", build_review_checklists())
+        self.write_text("review-pack/agent-context.md", build_agent_context(self.manifest))
+
+    def write_runtime_structures(self, outputs: dict[str, str]) -> None:
+        systemd_units = parse_systemd_units(outputs.get("runtime/systemd-units.txt", ""))
+        timers = parse_systemd_timers(outputs.get("runtime/systemd-timers.txt", ""))
+        listeners = parse_ss_listeners(outputs.get("runtime/listeners.txt", ""))
+        compose_projects = parse_compose_projects(outputs.get("containers/docker.txt", ""))
+
+        routes: list[dict] = []
+        unit_names = {item["unit"] for item in systemd_units}
+        if "cloudflared.service" in unit_names and "nginx.service" in unit_names:
+            routes.append({"source": "cloudflared", "target": "nginx.service", "label": "https"})
+        if "cloudflared.service" in unit_names and "caddy.service" in unit_names:
+            routes.append({"source": "cloudflared", "target": "caddy.service", "label": "https"})
+
+        services = {
+            "systemd_units": systemd_units,
+            "listeners": listeners,
+            "compose_projects": compose_projects,
+        }
+        self.write_json("apps/services.json", services)
+        self.write_json("ingress/routes.json", routes)
+        self.write_json(
+            "edge/connectivity.json",
+            {
+                "cloudflare_tunnel": "cloudflared.service" in unit_names,
+                "vpn_tools": {
+                    "wireguard": any(item["port"] == 51820 for item in listeners),
+                    "openvpn": any(item["port"] == 1194 for item in listeners),
+                    "tailscale": any("tailscale" in item["unit"] for item in systemd_units),
+                },
+                "listeners": listeners,
+            },
+        )
+        self.write_json(
+            "operations/backups.json",
+            {
+                "timers": [item for item in timers if "backup" in item["unit"]],
+                "units": [item for item in systemd_units if "backup" in item["unit"]],
+                "cron_paths": [line.strip() for line in outputs.get("runtime/cron.txt", "").splitlines() if "backup" in line.lower()],
+            },
+        )
+        graph_services = [{"name": item["unit"], "kind": "systemd"} for item in systemd_units]
+        self.write_text("graphs/services.mmd", render_service_graph(graph_services, listeners, routes))
+
+    def write_bundle_qa(self, zip_path: Path | None) -> None:
+        member_name_findings: list[str] = []
+        text_scan_findings: list[str] = []
+        zip_open_ok = False
+        zip_member_count = 0
+
+        if zip_path and zip_path.exists():
+            with zipfile.ZipFile(zip_path) as zf:
+                members = zf.namelist()
+                zip_member_count = len(members)
+                zip_open_ok = zf.testzip() is None
+            secret_name_re = re.compile(
+                r"(?i)(\.pem$|\.key$|\.p12$|\.kdbx$|authorized_keys|id_rsa|id_ed25519|token|secret|password)"
+            )
+            for member in members:
+                if secret_name_re.search(member):
+                    member_name_findings.append(member)
+
+        suspicious_text_re = re.compile(
+            r"(?i)(password\s*[=:]\s*(?!REDACTED)|secret\s*[=:]\s*(?!REDACTED)|token\s*[=:]\s*(?!REDACTED))"
+        )
+        for path in sorted(self.output_dir.rglob("*")):
+            if not path.is_file() or path.suffix == ".zip":
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if suspicious_text_re.search(text):
+                text_scan_findings.append(str(path.relative_to(self.output_dir)))
+
+        self.write_json(
+            "bundle_qa.json",
+            {
+                "zip_requested": self.options.create_zip,
+                "zip_present": bool(zip_path and zip_path.exists()),
+                "zip_open_ok": zip_open_ok,
+                "zip_member_count": zip_member_count,
+                "member_name_findings": member_name_findings,
+                "text_scan_findings": text_scan_findings,
+            },
+        )
 
     def readme(self) -> str:
         return (
@@ -382,14 +550,26 @@ class HostMapper:
         )
 
     def summary(self) -> str:
+        file_count = len(self.manifest["files"]) + 1
         return (
             "# Hostmap Summary\n\n"
             f"- Generated at: `{self.manifest['generated_at']}`\n"
             f"- Hostname: `{self.manifest['hostname']}`\n"
             f"- Mode: `{self.options.mode}`\n"
-            f"- Files written: `{len(self.manifest['files'])}`\n"
+            f"- Schema version: `{self.manifest['schema_version']}`\n"
+            f"- Files written: `{file_count}`\n"
             f"- Commands attempted: `{len(self.manifest['commands'])}`\n\n"
-            "Start with `runtime/`, `ingress/`, `containers/`, `apps/`, and `operations/`.\n"
+            "Start with `bundle_qa.json`, `manifest.json`, `review-pack/`, `runtime/`, `ingress/`, `containers/`, `apps/`, and `operations/`.\n"
+        )
+
+    def recommendations(self) -> str:
+        return (
+            "# Review Recommendations\n\n"
+            "- Start with `bundle_qa.json` to confirm archive integrity and redaction scan status.\n"
+            "- Read `manifest.json` and `review-pack/checklists.json` before raw text files.\n"
+            "- Use `graphs/services.mmd` and `edge/connectivity.json` to form architecture hypotheses, then confirm them against `runtime/` and `apps/` evidence.\n"
+            "- Treat missing collectors and redacted values as unknowns, not absence.\n"
+            "- For drift review, compare this bundle against a previous run with `hostmap diff`.\n"
         )
 
 

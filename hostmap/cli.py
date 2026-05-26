@@ -5,9 +5,10 @@ from pathlib import Path
 
 from . import __version__
 from .collect import HostMapper, HostmapOptions
+from .diffing import write_diff_bundle
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_collect_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hostmap",
         description="Create a safe, read-only Linux host architecture map.",
@@ -25,8 +26,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_diff_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="hostmap diff",
+        description="Compare two existing hostmap bundles without touching a live host.",
+    )
+    parser.add_argument("before", help="Earlier hostmap bundle directory.")
+    parser.add_argument("after", help="Later hostmap bundle directory.")
+    parser.add_argument("--output", required=True, help="Output directory for diff files.")
+    return parser
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    argv = argv or []
+    if argv and argv[0] == "diff":
+        args = build_diff_parser().parse_args(argv[1:])
+        diff_path = write_diff_bundle(Path(args.before), Path(args.after), Path(args.output))
+        print(f"diff_path={diff_path}")
+        return 0
+
+    args = build_collect_parser().parse_args(argv)
     options = HostmapOptions(
         output_root=Path(args.output),
         mode=args.mode,

@@ -62,6 +62,15 @@ After generating a bundle:
 3. Scan included text for unredacted secret-looking assignments.
 4. Report final archive path, size, included sections, exclusions, and unreadable paths.
 
+Review from structured outputs first:
+
+- `manifest.json` and `bundle_qa.json`
+- `review-pack/checklists.json`
+- `apps/services.json`, `edge/connectivity.json`, `operations/backups.json`
+- Mermaid diagrams under `graphs/`
+
+Use Mermaid service graphs as reviewer aids only; they summarize collected facts and do not replace raw evidence.
+
 Do not delete generated output unless the user asks.
 
 ## Updating This Skill

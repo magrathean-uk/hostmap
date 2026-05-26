@@ -6,6 +6,8 @@ put together without collecting secrets or changing the system.
 
 It generates Markdown plus JSON, then optionally zips the result.
 
+Current bundle contract is schema v1 (`schema_version: "1.0"`).
+
 ## What It Maps
 
 - OS, kernel, package, and language/runtime versions
@@ -15,6 +17,8 @@ It generates Markdown plus JSON, then optionally zips the result.
 - Git repositories, GitHub/GitLab/Gitea/Forgejo CI files, deploy files
 - databases, queues, monitoring, logging, and backup tool presence
 - directory-only filesystem maps with heavy and secret paths pruned
+- structured app, edge, backup, and package inventories
+- Mermaid diagrams for reviewer-friendly service maps
 
 ## Safety Model
 
@@ -48,6 +52,15 @@ Modes:
 - `paranoid`: versions, runtime snapshots, and directory maps only
 - `local`: safe mode plus extra local VPN config roots with redaction
 
+Bundle highlights:
+
+- `manifest.json` with `schema_version`, mode policy, files, commands, skips
+- `bundle_qa.json` with zip-open and redaction scan checks
+- `review-pack/` with agent context and role checklists
+- `apps/services.json`, `edge/connectivity.json`, `operations/backups.json`
+- `packages/installed.json` and `packages/declared.json`
+- `graphs/services.mmd` Mermaid graph
+
 The generated archive is named like:
 
 ```text
@@ -58,6 +71,14 @@ hostmap-output/2026-05-20-120000.zip
 
 See [docs/prompts.md](docs/prompts.md) for prompts users can give to GPT-5.5
 Pro, Codex, or another reviewer agent.
+
+## Offline Diff
+
+Compare two existing bundles without touching a live host:
+
+```bash
+python3 -m hostmap diff /path/to/before /path/to/after --output hostmap-diff
+```
 
 ## Codex Skill
 
