@@ -9,3 +9,4 @@ dist/
 *.egg-info/
 hostmap-output/
 *.zip
+.DS_Store
