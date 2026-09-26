@@ -283,7 +283,7 @@ class HostMapper:
             Path(f"/run/user/{os.getuid()}/docker.sock"),
         ]
         for socket in sockets:
-            if socket.is_socket():
+            if HostMapper.is_local_socket(socket):
                 return f"docker --host unix://{socket} compose ls --format json 2>&1 || true"
         return "printf '%s\\n' '[skipped: no local Docker socket found]'"
 
@@ -294,9 +294,16 @@ class HostMapper:
             Path(f"/run/user/{os.getuid()}/podman/podman.sock"),
         ]
         for socket in sockets:
-            if socket.is_socket():
+            if HostMapper.is_local_socket(socket):
                 return f"podman --remote --url unix://{socket} ps --format 'table {{{{.Names}}}}\\t{{{{.Image}}}}\\t{{{{.Status}}}}\\t{{{{.Ports}}}}' 2>&1 || true"
         return "printf '%s\\n' '[skipped: no local Podman socket found]'"
+
+    @staticmethod
+    def is_local_socket(path: Path) -> bool:
+        try:
+            return path.is_socket()
+        except OSError:
+            return False
 
     def collect_filesystem_maps(self) -> None:
         self.write_text(

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from hostmap.collect import HostMapper, HostmapOptions
@@ -98,6 +99,8 @@ def test_run_writes_structured_outputs(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(HostMapper, "collect_tool_matrices", lambda self: None)
     monkeypatch.setattr(HostMapper, "collect_configs", lambda self: None)
     monkeypatch.setattr(HostMapper, "find_git_repos", lambda self: [repo])
+    monkeypatch.setattr(HostMapper, "docker_compose_command", staticmethod(lambda: "printf docker-skipped"))
+    monkeypatch.setattr(HostMapper, "podman_command", staticmethod(lambda: "printf podman-skipped"))
 
     result = HostMapper(
         HostmapOptions(output_root=tmp_path / "out", mode="safe", max_zip_mb=10, create_zip=False, timestamp="test")
@@ -138,6 +141,24 @@ def test_runtime_collection_uses_only_local_container_and_kubernetes_evidence(tm
     assert "systemctl" in commands["containers/kubernetes.txt"]
     assert commands["containers/docker.txt"] == "printf docker-skipped"
     assert commands["containers/podman.txt"] == "printf podman-skipped"
+
+
+def test_local_socket_discovery_skips_permission_errors_and_uses_fallback(monkeypatch) -> None:
+    uid = os.getuid()
+    fallback_sockets = {
+        f"/run/user/{uid}/docker.sock",
+        f"/run/user/{uid}/podman/podman.sock",
+    }
+
+    def fake_is_socket(path: Path) -> bool:
+        if str(path) in {"/var/run/docker.sock", "/run/podman/podman.sock"}:
+            raise PermissionError("access denied")
+        return str(path) in fallback_sockets
+
+    monkeypatch.setattr(Path, "is_socket", fake_is_socket)
+
+    assert f"unix:///run/user/{uid}/docker.sock" in HostMapper.docker_compose_command()
+    assert f"unix:///run/user/{uid}/podman/podman.sock" in HostMapper.podman_command()
 
 
 def test_runtime_structures_do_not_invent_proxy_routes(tmp_path: Path) -> None:
