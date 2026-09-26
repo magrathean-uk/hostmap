@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from html import escape
+
+
+def _inline_code_value(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        return "unknown"
+    return escape(value.replace("\r", " ").replace("\n", " "), quote=False)
+
 
 def build_review_checklists() -> dict[str, list[str]]:
     return {
@@ -22,15 +30,15 @@ def build_review_checklists() -> dict[str, list[str]]:
 
 
 def build_agent_context(manifest: dict) -> str:
-    mode = manifest.get("mode", "unknown")
-    hostname = manifest.get("hostname", "unknown")
-    schema_version = manifest.get("schema_version", "unknown")
+    mode = _inline_code_value(manifest.get("mode"))
+    hostname = _inline_code_value(manifest.get("hostname"))
+    schema_version = _inline_code_value(manifest.get("schema_version"))
     return (
         "# Hostmap Agent Context\n\n"
-        f"- Hostname: `{hostname}`\n"
-        f"- Schema version: `{schema_version}`\n"
-        f"- Mode: `{mode}`\n"
+        f"- Hostname: <code>{hostname}</code>\n"
+        f"- Schema version: <code>{schema_version}</code>\n"
+        f"- Mode: <code>{mode}</code>\n"
         "- Read JSON contracts before raw text dumps.\n"
         "- Distinguish facts, inference, and manual follow-up.\n"
-        "- Treat secrets as redacted and absent by design.\n"
+        "- Do not infer that secrets are absent from redaction or collector exclusions.\n"
     )

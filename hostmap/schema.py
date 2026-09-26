@@ -3,7 +3,9 @@ from __future__ import annotations
 from copy import deepcopy
 
 
-SCHEMA_VERSION = "1.0"
+# 1.1 records complete file inventories and separates VPN port hints from
+# observed services; offline diffs additionally report changed file contents.
+SCHEMA_VERSION = "1.1"
 
 MODE_POLICIES = {
     "safe": {

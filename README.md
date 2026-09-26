@@ -2,7 +2,7 @@
 
 `hostmap` creates a safe, read-only architecture and evidence map of a Linux host. It is intended for operators, reviewers, incident responders, and AI agents that need to understand how a machine is assembled without changing it or collecting raw secrets.
 
-Built by [Magrathean UK](https://magrathean.uk). Current project status: **alpha**. The bundle contract is schema v1 (`schema_version: "1.0"`).
+Built by [Magrathean UK](https://magrathean.uk). Current project status: **alpha**. The bundle contract is schema v1.1 (`schema_version: "1.1"`).
 
 ## Output
 
@@ -12,7 +12,7 @@ Typical coverage includes:
 
 - OS, kernel, package, and language/runtime versions;
 - systemd services, timers, sockets, listeners, processes, cron, and filesystems;
-- Docker, Docker Compose, Podman, Kubernetes, and k3s;
+- Docker Compose and Podman through existing local sockets, plus local Kubernetes/k3s service and version evidence;
 - nginx, Apache, Caddy, Traefik, HAProxy, Cloudflare Tunnel, and VPN tooling;
 - Git repositories, CI definitions, deployment files, and declared dependencies;
 - databases, queues, monitoring, logging, and backup tooling;
@@ -22,9 +22,9 @@ Typical coverage includes:
 
 ## Safety model
 
-`hostmap` is read-only. It does not restart services, edit files, install packages, change firewall rules, or call external network APIs. It is an architecture and documentation tool, not a vulnerability scanner.
+`hostmap` inspects host state read-only and writes only its output bundle. It does not restart services, edit source configuration, install packages, change firewall rules, or call external network APIs. It is an architecture and documentation tool, not a vulnerability scanner. Kubernetes cluster queries and remote container contexts are excluded; unavailable local sockets produce gaps in the inventory.
 
-Default collection excludes private keys, token files, databases, browser profiles, caches, container stores, build outputs, and large files. Small included configuration files are redacted line by line. The manifest records commands, collected files, skips, and mode policy.
+Default collection excludes private keys, token files, databases, browser profiles, caches, container stores, build outputs, and large files. Small included configuration files are redacted, including recognized multiline credential blocks. Filesystem walks have depth and entry limits; a bundle is an inventory sample, not an exhaustive filesystem audit. The manifest records commands, collected files, skips, and mode policy.
 
 Redaction reduces risk; it does not make an infrastructure inventory public-safe. Generated bundles may still reveal hostnames, topology, service names, software versions, paths, and operational relationships. Review every bundle before sharing it outside the system owner's trust boundary.
 
@@ -63,6 +63,8 @@ The generated archive is named like:
 hostmap-output/2026-05-20-120000.zip
 ```
 
+Existing bundle directories and archives are never replaced. Use `--no-zip` for a directory-only bundle, or `--max-zip-mb 100` to set a positive archive limit in MiB. Collection requires Linux; help, version output, and offline diff also work on other platforms.
+
 ## Bundle contract
 
 Important paths include:
@@ -78,6 +80,8 @@ Important paths include:
 
 Presence is evidence, not proof of health. A configured service, backup, firewall, or deployment path may still be stale or broken and must be validated on the target host.
 
+Schema v1.1 includes each generated file once in `manifest.json`. In `edge/connectivity.json`, the old `vpn_tools.wireguard` and `vpn_tools.openvpn` flags are now `wireguard_default_port_listener` and `openvpn_default_port_listener`: default ports are hints, not proof of a VPN service. The collector does not infer proxy routes from services merely being installed together. Archive QA describes the completed bundle; review its findings before sharing.
+
 ## Offline diff
 
 Compare two existing bundles without touching a live host:
@@ -85,6 +89,8 @@ Compare two existing bundles without touching a live host:
 ```bash
 python3 -m hostmap diff /path/to/before /path/to/after --output hostmap-diff
 ```
+
+`diff.json` reports `added_files`, `removed_files`, `changed_files` (byte changes), and `changed_fields` in manifest metadata. Added or removed metadata keys include `before_present` and `after_present` to distinguish absence from `null`. It does not infer whether a change is operationally significant. Both inputs must be complete bundle directories. The output must be outside both inputs, and existing diff reports are preserved. Older schema-v1 bundles remain readable, including duplicate file references from older collectors.
 
 ## Reviewer prompts and Codex skill
 
@@ -103,6 +109,8 @@ python3 -m pip install . pytest
 python3 -m pytest -q
 python3 -m hostmap --mode paranoid --output /tmp/hostmap-smoke
 ```
+
+CI checks Python 3.10 and 3.14, the installed CLI, and a Linux paranoid bundle. The dependency security audit fails on reported vulnerabilities or audit errors.
 
 ## Security and licence
 

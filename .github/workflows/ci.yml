@@ -4,17 +4,49 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: python -m pip install -U pip pytest
+        run: python -m pip install . pytest
       - name: Run tests
         run: python -m pytest -q
       - name: Smoke test CLI
-        run: python -m hostmap --mode paranoid --output /tmp/hostmap-ci
+        run: |
+          hostmap --version
+          python -m hostmap --mode paranoid --output /tmp/hostmap-ci
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import zipfile
+
+          root = Path("/tmp/hostmap-ci")
+          bundle, = (path for path in root.iterdir() if path.is_dir())
+          manifest = json.loads((bundle / "manifest.json").read_text())
+          assert manifest["mode"] == "paranoid"
+          assert not manifest["mode_policy"]["include_configs"]
+          archive, = root.glob("*.zip")
+          with zipfile.ZipFile(archive) as zf:
+              assert zf.testzip() is None
+              assert json.loads(zf.read("manifest.json")) == manifest
+              assert set(zf.namelist()) == set(manifest["files"])
+              assert zf.read("bundle_qa.json") == (bundle / "bundle_qa.json").read_bytes()
+          diff_root = Path("/tmp/hostmap-ci-diff")
+          subprocess.run([sys.executable, "-m", "hostmap", "diff", str(bundle), str(bundle), "--output", str(diff_root)], check=True)
+          diff = json.loads((diff_root / "diff.json").read_text())
+          assert diff["changed_files"] == []
+          assert diff["changed_fields"] == {}
+          PY

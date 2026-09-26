@@ -14,6 +14,8 @@ Use this skill to create or review a safe architecture map of a Linux host.
 - Do not collect secrets, private keys, token files, passwords, database files, browser profiles, SSH material, or credential stores.
 - Redact secret-looking values from any included small config files.
 - Separate confirmed facts from inference and from items that need manual verification.
+- Use existing local container sockets only; do not query remote container contexts or Kubernetes cluster APIs.
+- Preserve existing output directories and archives; select a new output location if a run would collide.
 
 ## Preferred Tool
 
@@ -69,9 +71,13 @@ Review from structured outputs first:
 - `apps/services.json`, `edge/connectivity.json`, `operations/backups.json`
 - Mermaid diagrams under `graphs/`
 
+Schema v1.1 records each generated file once. Check final archive QA and treat default VPN ports as hints, not confirmed services. Co-present ingress services do not establish a route. Filesystem walks are bounded, and unavailable sockets or skipped cluster queries leave unknowns.
+
 Use Mermaid service graphs as reviewer aids only; they summarize collected facts and do not replace raw evidence.
 
 Do not delete generated output unless the user asks.
+
+For offline comparison, run `hostmap diff BEFORE AFTER --output NEW_OUTPUT` with complete bundle directories and output outside both inputs. Review `added_files`, `removed_files`, `changed_files` (byte changes), and manifest `changed_fields`. Existing diff reports are preserved. Diff works on non-Linux systems too.
 
 ## Updating This Skill
 

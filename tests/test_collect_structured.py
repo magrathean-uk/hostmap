@@ -116,3 +116,49 @@ def test_run_writes_structured_outputs(tmp_path: Path, monkeypatch) -> None:
     assert installed[0]["name"] == "bash"
     assert any(item["source"] == "package.json" for item in declared)
     assert "graph TD" in graph
+
+
+def test_runtime_collection_uses_only_local_container_and_kubernetes_evidence(tmp_path: Path, monkeypatch) -> None:
+    commands: dict[str, str] = {}
+
+    def fake_run_command(self, name: str, cmd: str, timeout: int = 60) -> str:
+        commands[name] = cmd
+        return ""
+
+    mapper = HostMapper(HostmapOptions(output_root=tmp_path, create_zip=False, timestamp="test"))
+    mapper.output_dir.mkdir()
+    monkeypatch.setattr(HostMapper, "run_command", fake_run_command)
+    monkeypatch.setattr(HostMapper, "docker_compose_command", staticmethod(lambda: "printf docker-skipped"))
+    monkeypatch.setattr(HostMapper, "podman_command", staticmethod(lambda: "printf podman-skipped"))
+
+    mapper.collect_runtime()
+
+    assert "kubectl get" not in commands["containers/kubernetes.txt"]
+    assert "k3s kubectl" not in commands["containers/kubernetes.txt"]
+    assert "systemctl" in commands["containers/kubernetes.txt"]
+    assert commands["containers/docker.txt"] == "printf docker-skipped"
+    assert commands["containers/podman.txt"] == "printf podman-skipped"
+
+
+def test_runtime_structures_do_not_invent_proxy_routes(tmp_path: Path) -> None:
+    mapper = HostMapper(HostmapOptions(output_root=tmp_path, create_zip=False, timestamp="test"))
+    mapper.output_dir.mkdir()
+    mapper.write_runtime_structures(
+        {
+            "runtime/systemd-units.txt": (
+                "UNIT LOAD ACTIVE SUB DESCRIPTION\n"
+                "cloudflared.service loaded active running Cloudflare Tunnel\n"
+                "nginx.service loaded active running A web server\n"
+            ),
+            "runtime/systemd-timers.txt": "",
+            "runtime/listeners.txt": "udp UNCONN 0 0 0.0.0.0:51820 0.0.0.0:*\n",
+            "containers/docker.txt": "",
+            "runtime/cron.txt": "",
+        }
+    )
+
+    routes = json.loads((mapper.output_dir / "ingress/routes.json").read_text())
+    edge = json.loads((mapper.output_dir / "edge/connectivity.json").read_text())
+
+    assert routes == []
+    assert edge["vpn_tools"]["wireguard_default_port_listener"] is True

@@ -10,6 +10,7 @@ Goal: create a safe, shareable architecture map of this Linux host for review.
 Rules:
 - Do not change services, configs, packages, firewall rules, users, permissions, or running containers.
 - Read-only inspection only.
+- Inspect existing local container sockets only; do not query remote container contexts or Kubernetes cluster APIs.
 - Do not collect secrets, private keys, tokens, passwords, database files, browser profiles, SSH material, or credential stores.
 - Redact secret-looking values from any small config files that are included.
 - Exclude heavy/generated trees such as `.git`, `node_modules`, `.venv`, `target`, Docker/containerd storage, journals, caches, databases, backups, and build artifacts unless only listing their directory names is safe.
@@ -32,7 +33,7 @@ Please map this system broadly, even if some services are not installed. Check f
 
 Create a local output folder named:
 
-`hostmap-output/YYYY-MM-DD-HHMM/`
+`hostmap-output/YYYY-MM-DD-HHMMSS/`
 
 Inside it, generate markdown and JSON files such as:
 - `README.md`
@@ -56,7 +57,7 @@ Inside it, generate markdown and JSON files such as:
 
 Also create a compressed reviewer archive:
 
-`hostmap-output/YYYY-MM-DD-HHMM.zip`
+`hostmap-output/YYYY-MM-DD-HHMMSS.zip`
 
 Keep the archive below 500MB.
 
@@ -68,7 +69,18 @@ After generating it:
 
 Use `manifest.json`, `bundle_qa.json`, `review-pack/checklists.json`, and Mermaid files under `graphs/` as the primary reviewer contract before free-form inference.
 
+For schema v1.1, check the complete file inventory and final archive QA. Default VPN ports are hints only; co-present proxy services do not prove a route. Treat collection limits, unavailable sockets, permission failures, and intentionally skipped cluster queries as unknowns. Preserve existing bundles and archives.
+
 Do not delete the generated output unless I explicitly ask.
+```
+
+## Compare Local Bundles
+
+```text
+Compare two complete hostmap bundle directories with `hostmap diff BEFORE AFTER --output NEW_OUTPUT`.
+Keep output outside both input bundles and preserve existing reports.
+Review added_files, removed_files, changed_files, and changed_fields in diff.json.
+Treat byte changes as evidence for follow-up, not proof of a service or security regression.
 ```
 
 ## Improve The Public Skill From A Local Bundle

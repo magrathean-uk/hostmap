@@ -1,10 +1,13 @@
-name: 🛡️ Dependency & License Audit
+name: Dependency Security Audit
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   audit:
@@ -24,4 +27,4 @@ jobs:
           pip install pip-audit
       - name: Run pip-audit vulnerability scan
         run: |
-          pip-audit --progress-spinner off || echo "Audit completed with warnings"
+          pip-audit --progress-spinner off

@@ -5,7 +5,6 @@ import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import zipfile
 from dataclasses import dataclass, field
@@ -39,6 +38,27 @@ DEPLOY_FILE_RE = re.compile(
     r"(?i)(deploy|release|service|timer|compose|docker|container|procfile|makefile|"
     r"requirements|pyproject|package|cargo|go\.mod|pom\.xml|build\.gradle)"
 )
+
+SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"""(?ix)
+    (?:^|[,{\s])(?:export\s+)?
+    ["']?(?:
+        password|passwd|pass|secret|token|credential|authorization|api[_-]?key|
+        private[_-]?key|client[_-]?secret|access[_-]?key|tunnel[_-]?token|
+        github_token|gitlab_token|cf_api|aws_.*key|b2_.*key|mysql_pwd|pgpassword|
+        privatekey|[a-z0-9_.-]*(?:token|secret|password|credential|api[_-]?key)[a-z0-9_.-]*
+    )["']?\s*[=:]\s*
+    (?P<value>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,\s#}\]]+)
+    """
+)
+URL_CREDENTIAL_RE = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://(?!REDACTED@)[^/\s@]+@")
+AUTH_CREDENTIAL_RE = re.compile(r"(?i)\b(?:bearer|basic)\s+(?!REDACTED\b)[A-Za-z0-9._~+/=-]+")
+PEM_PRIVATE_KEY_RE = re.compile(r"(?i)-----BEGIN [^-]*PRIVATE KEY-----")
+
+MAX_DIRECTORY_MAP_DEPTH = 5
+MAX_DIRECTORY_MAP_ENTRIES = 10_000
+MAX_CONFIG_DEPTH = 5
+MAX_CI_DEPTH = 4
 
 
 @dataclass
@@ -81,8 +101,11 @@ class HostMapper:
         }
 
     def run(self) -> HostmapResult:
-        if self.output_dir.exists():
-            shutil.rmtree(self.output_dir)
+        if self.output_dir.exists() or self.output_dir.is_symlink():
+            raise FileExistsError(f"refusing to replace existing output directory: {self.output_dir}")
+        zip_path = self.options.output_root / f"{self.options.timestamp}.zip"
+        if self.options.create_zip and (zip_path.exists() or zip_path.is_symlink()):
+            raise FileExistsError(f"refusing to replace existing archive: {zip_path}")
         self.output_dir.mkdir(parents=True)
         self.write_text("README.md", self.readme())
         self.write_text("redaction-report.md", self.redaction_report())
@@ -95,19 +118,39 @@ class HostMapper:
         if self.mode_policy["include_git_metadata"]:
             self.collect_git_and_ci()
         self.write_review_pack()
-        zip_path = self.build_zip() if self.options.create_zip else None
-        self.write_bundle_qa(zip_path)
         self.write_text("recommendations.md", self.recommendations())
-        self.write_json("manifest.json", self.manifest)
+        self.reserve_output_files()
         self.write_text("summary.md", self.summary())
-        zip_path = self.build_zip() if self.options.create_zip else None
+        self.write_json("manifest.json", self.manifest)
+        zip_path: Path | None = None
+        self.write_bundle_qa(None)
+        if self.options.create_zip:
+            try:
+                zip_path = self.build_zip()
+                self.write_bundle_qa(zip_path)
+                zip_path = self.build_zip(replace_existing=True)
+            except BaseException:
+                archive_path = self.options.output_root / f"{self.options.timestamp}.zip"
+                if zip_path is not None and archive_path.is_file() and not archive_path.is_symlink():
+                    archive_path.unlink()
+                raise
+        self.write_bundle_qa(zip_path)
         return HostmapResult(self.output_dir, zip_path, self.manifest)
+
+    def reserve_output_files(self) -> None:
+        files = ["bundle_qa.json", "manifest.json", "summary.md"]
+        if self.options.create_zip:
+            files.append("ARCHIVE_SIZE.txt")
+        for rel in files:
+            if rel not in self.manifest["files"]:
+                self.manifest["files"].append(rel)
 
     def write_text(self, rel: str, text: str) -> None:
         dest = self.output_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(text, encoding="utf-8", errors="replace")
-        self.manifest["files"].append(rel)
+        if rel not in self.manifest["files"]:
+            self.manifest["files"].append(rel)
 
     def write_json(self, rel: str, data: object) -> None:
         self.write_text(rel, json.dumps(data, indent=2, sort_keys=True) + "\n")
@@ -116,16 +159,58 @@ class HostMapper:
         self.manifest["commands"].append({"name": name, "command": cmd})
         try:
             output = subprocess.check_output(
-                ["bash", "-lc", cmd],
+                ["bash", "--noprofile", "--norc", "-c", cmd],
                 stderr=subprocess.STDOUT,
                 text=True,
                 timeout=timeout,
+                env=self.command_environment(),
             )
         except subprocess.CalledProcessError as exc:
             output = exc.output
+        except subprocess.TimeoutExpired:
+            output = f"[command timed out after {timeout} seconds]\n"
         except Exception as exc:
             output = f"[command failed: {exc}]\n"
         return redact_text(output)
+
+    def command_succeeds(self, name: str, cmd: str, timeout: int = 30) -> bool:
+        self.manifest["commands"].append({"name": name, "command": cmd})
+        try:
+            result = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-c", cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                env=self.command_environment(),
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.manifest["skipped"].append({"command": name, "reason": f"timed out after {timeout} seconds"})
+            return False
+        except OSError as exc:
+            self.manifest["skipped"].append({"command": name, "reason": str(exc)})
+            return False
+        return result.returncode == 0
+
+    @staticmethod
+    def command_environment() -> dict[str, str]:
+        env = os.environ.copy()
+        env.update(
+            {
+                "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+                "DOTNET_NOLOGO": "1",
+                "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1",
+                "GOTOOLCHAIN": "local",
+                "LC_ALL": "C",
+                "RUSTUP_AUTO_INSTALL": "0",
+            }
+        )
+        for name in ("BASH_ENV", "CONTAINER_CONNECTION", "CONTAINER_HOST", "DOCKER_CONTEXT", "DOCKER_HOST", "ENV", "KUBECONFIG"):
+            env.pop(name, None)
+        for name in tuple(env):
+            if name.startswith("BASH_FUNC_"):
+                env.pop(name)
+        return env
 
     def collect_versions(self) -> None:
         commands = [
@@ -177,12 +262,12 @@ class HostMapper:
             "runtime/systemd-timers.txt": "systemctl --no-pager list-timers --all 2>&1 || true",
             "runtime/systemd-sockets.txt": "systemctl --no-pager list-sockets --all 2>&1 || true",
             "runtime/listeners.txt": "ss -tulpen 2>&1 || ss -tuln 2>&1 || true",
-            "runtime/processes.txt": "ps -eo pid,ppid,user,stat,comm,args --sort=comm 2>&1 || true",
+            "runtime/processes.txt": "ps -eo pid,ppid,user,stat,comm --sort=comm 2>&1 || true",
             "runtime/cron.txt": "find /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.monthly /etc/cron.weekly -maxdepth 2 -type f -print 2>/dev/null | sort || true",
             "runtime/filesystems.txt": "df -hT 2>&1 && printf '\\n' && findmnt -D -o SOURCE,FSTYPE,SIZE,USED,AVAIL,USE%,TARGET 2>&1 || true",
-            "containers/docker.txt": "docker compose ls --format json 2>&1 || true",
-            "containers/podman.txt": "podman ps --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' 2>&1 || true",
-            "containers/kubernetes.txt": "kubectl get nodes,pods,svc -A -o wide 2>&1 || true; printf '\\n'; k3s kubectl get nodes,pods,svc -A -o wide 2>&1 || true",
+            "containers/docker.txt": self.docker_compose_command(),
+            "containers/podman.txt": self.podman_command(),
+            "containers/kubernetes.txt": "systemctl --no-pager list-unit-files 2>&1 | grep -Ei '(^|[-@.])(k3s|kubelet|microk8s)([-@.]|$)' || true",
         }
         outputs: dict[str, str] = {}
         for rel, cmd in commands.items():
@@ -190,6 +275,28 @@ class HostMapper:
             outputs[rel] = output
             self.write_text(rel, f"$ {cmd}\n{output}")
         self.write_runtime_structures(outputs)
+
+    @staticmethod
+    def docker_compose_command() -> str:
+        sockets = [
+            Path("/var/run/docker.sock"),
+            Path(f"/run/user/{os.getuid()}/docker.sock"),
+        ]
+        for socket in sockets:
+            if socket.is_socket():
+                return f"docker --host unix://{socket} compose ls --format json 2>&1 || true"
+        return "printf '%s\\n' '[skipped: no local Docker socket found]'"
+
+    @staticmethod
+    def podman_command() -> str:
+        sockets = [
+            Path("/run/podman/podman.sock"),
+            Path(f"/run/user/{os.getuid()}/podman/podman.sock"),
+        ]
+        for socket in sockets:
+            if socket.is_socket():
+                return f"podman --remote --url unix://{socket} ps --format 'table {{{{.Names}}}}\\t{{{{.Image}}}}\\t{{{{.Status}}}}\\t{{{{.Ports}}}}' 2>&1 || true"
+        return "printf '%s\\n' '[skipped: no local Podman socket found]'"
 
     def collect_filesystem_maps(self) -> None:
         self.write_text(
@@ -206,15 +313,32 @@ class HostMapper:
         if not root.exists():
             lines.append("[missing]\n")
             return "".join(lines)
+        entries = 0
+        truncated = False
+        depth_limited = False
         try:
-            walker = os.walk(root, topdown=True, followlinks=False)
+            def onerror(exc: OSError) -> None:
+                lines.append(f"[unreadable: {exc}]\n")
+
+            walker = os.walk(root, topdown=True, followlinks=False, onerror=onerror)
             for current, dirs, _files in walker:
                 current_path = Path(current)
                 dirs[:] = sorted(d for d in dirs if not should_prune_dir(current_path / d))
                 depth = 0 if current_path == root else len(current_path.relative_to(root).parts)
                 lines.append(f"{'  ' * depth}{current_path.name or str(current_path)}/\n")
+                entries += 1
+                if depth >= MAX_DIRECTORY_MAP_DEPTH:
+                    depth_limited = depth_limited or bool(dirs)
+                    dirs[:] = []
+                if entries >= MAX_DIRECTORY_MAP_ENTRIES:
+                    truncated = True
+                    break
         except OSError as exc:
             lines.append(f"[unreadable: {exc}]\n")
+        if truncated:
+            lines.append(f"[truncated after {MAX_DIRECTORY_MAP_ENTRIES} directories]\n")
+        if depth_limited:
+            lines.append(f"[depth limited to {MAX_DIRECTORY_MAP_DEPTH} levels]\n")
         return "".join(lines)
 
     def collect_tool_matrices(self) -> None:
@@ -257,7 +381,7 @@ class HostMapper:
         for rel, checks_for_file in checks.items():
             rows = ["| Component | Detected |\n", "|---|---:|\n"]
             for label, cmd in checks_for_file:
-                found = subprocess.call(["bash", "-lc", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+                found = self.command_succeeds(f"probe:{label}", cmd)
                 rows.append(f"| `{label}` | {'yes' if found else 'no'} |\n")
             self.write_text(rel, "".join(rows))
 
@@ -285,11 +409,18 @@ class HostMapper:
             if not root_path.exists():
                 continue
             try:
-                paths = root_path.rglob("*")
-                for path in paths:
-                    if not is_small_file(path) or not CONFIG_NAME_RE.search(path.name):
-                        continue
-                    self.copy_redacted(path, "config-files")
+                def onerror(exc: OSError) -> None:
+                    self.manifest["skipped"].append({"path": str(exc.filename or root_path), "reason": str(exc)})
+
+                for current, dirs, files in os.walk(root_path, topdown=True, followlinks=False, onerror=onerror):
+                    current_path = Path(current)
+                    dirs[:] = sorted(d for d in dirs if not should_prune_dir(current_path / d))
+                    if len(current_path.relative_to(root_path).parts) >= MAX_CONFIG_DEPTH:
+                        dirs[:] = []
+                    for name in sorted(files):
+                        path = current_path / name
+                        if is_small_file(path) and CONFIG_NAME_RE.search(path.name):
+                            self.copy_redacted(path, "config-files")
             except OSError as exc:
                 self.manifest["skipped"].append({"path": str(root_path), "reason": str(exc)})
 
@@ -300,7 +431,11 @@ class HostMapper:
         declared_packages: list[dict] = []
         for repo in repos:
             qrepo = sh_quote(repo)
-            state = self.run_command("git-status", f"git -C {qrepo} status --short --branch 2>&1 | head -30", timeout=20).strip().replace("\n", "<br>")
+            state = self.run_command(
+                "git-status",
+                f"GIT_OPTIONAL_LOCKS=0 git --no-optional-locks -C {qrepo} -c core.fsmonitor=false -c core.untrackedCache=false status --short --branch 2>&1 | head -30",
+                timeout=20,
+            ).strip().replace("\n", "<br>")
             last = self.run_command("git-log", f"git -C {qrepo} log -1 --format='%H %ci %s' 2>&1", timeout=20).strip()
             remote = self.run_command("git-remote", f"git -C {qrepo} remote -v 2>&1", timeout=20).strip().replace("\n", "<br>")
             rows.append(f"| `{repo}` | {state} | {last} | {remote} |\n")
@@ -324,15 +459,17 @@ class HostMapper:
         self.write_json("packages/declared.json", declared_packages)
 
     def find_git_repos(self) -> list[Path]:
-        roots = [Path("/home"), Path("/opt"), Path("/srv"), Path("/var/www")]
+        roots = self.git_search_roots()
         repos: list[Path] = []
         for root in roots:
             if not root.exists():
                 continue
             try:
-                for current, dirs, _files in os.walk(root, topdown=True, followlinks=False):
+                def onerror(exc: OSError) -> None:
+                    self.manifest["skipped"].append({"path": str(exc.filename or root), "reason": str(exc)})
+
+                for current, dirs, _files in os.walk(root, topdown=True, followlinks=False, onerror=onerror):
                     current_path = Path(current)
-                    dirs[:] = sorted(d for d in dirs if not should_prune_dir(current_path / d))
                     depth = len(current_path.relative_to(root).parts)
                     if depth > 5:
                         dirs[:] = []
@@ -340,9 +477,14 @@ class HostMapper:
                     if ".git" in dirs:
                         repos.append(current_path)
                         dirs.remove(".git")
+                    dirs[:] = sorted(d for d in dirs if not should_prune_dir(current_path / d))
             except OSError as exc:
                 self.manifest["skipped"].append({"path": str(root), "reason": str(exc)})
         return sorted(set(repos))
+
+    @staticmethod
+    def git_search_roots() -> list[Path]:
+        return [Path("/home"), Path("/opt"), Path("/srv"), Path("/var/www")]
 
     def copy_ci_files(self, repo: Path) -> list[Path]:
         copied: list[Path] = []
@@ -360,10 +502,19 @@ class HostMapper:
                 copied.append(candidate)
             elif candidate.is_dir():
                 try:
-                    for path in candidate.rglob("*"):
-                        if is_small_file(path):
-                            self.copy_redacted(path, f"apps/ci-files/{safe_rel(repo)}")
-                            copied.append(path)
+                    def onerror(exc: OSError) -> None:
+                        self.manifest["skipped"].append({"path": str(exc.filename or candidate), "reason": str(exc)})
+
+                    for current, dirs, files in os.walk(candidate, topdown=True, followlinks=False, onerror=onerror):
+                        current_path = Path(current)
+                        dirs[:] = sorted(d for d in dirs if not should_prune_dir(current_path / d))
+                        if len(current_path.relative_to(candidate).parts) >= MAX_CI_DEPTH:
+                            dirs[:] = []
+                        for name in sorted(files):
+                            path = current_path / name
+                            if is_small_file(path):
+                                self.copy_redacted(path, f"apps/ci-files/{safe_rel(repo)}")
+                                copied.append(path)
                 except OSError as exc:
                     self.manifest["skipped"].append({"path": str(candidate), "reason": str(exc)})
         return copied
@@ -411,6 +562,8 @@ class HostMapper:
                     if parser is None:
                         continue
                     path = current_path / name
+                    if not is_small_file(path):
+                        continue
                     manifests.append(path)
                     for item in parser(path):
                         packages.append({"repo": str(repo), **item})
@@ -419,6 +572,9 @@ class HostMapper:
         return manifests, packages
 
     def copy_redacted(self, path: Path, prefix: str) -> None:
+        if path.is_symlink():
+            self.manifest["skipped"].append({"path": str(path), "reason": "symbolic links are excluded"})
+            return
         text = read_small_text(path)
         if text is None:
             self.manifest["skipped"].append({"path": str(path), "reason": "not small text or secret-like path"})
@@ -426,22 +582,41 @@ class HostMapper:
         rel = f"{prefix}/{safe_rel(path)}"
         self.write_text(rel, redact_text(text))
 
-    def build_zip(self) -> Path:
+    def build_zip(self, replace_existing: bool = False) -> Path:
         zip_path = self.options.output_root / f"{self.options.timestamp}.zip"
-        if zip_path.exists():
-            zip_path.unlink()
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-            for path in sorted(self.output_dir.rglob("*")):
-                if path.is_file() and path.name != "ARCHIVE_SIZE.txt":
-                    zf.write(path, path.relative_to(self.output_dir))
-        size = zip_path.stat().st_size
-        if size > self.options.max_zip_mb * 1024 * 1024:
-            zip_path.unlink(missing_ok=True)
-            raise SystemExit(f"archive exceeds {self.options.max_zip_mb}MB")
-        self.write_text("ARCHIVE_SIZE.txt", f"{zip_path}\n{size} bytes\n")
-        with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-            zf.write(self.output_dir / "ARCHIVE_SIZE.txt", "ARCHIVE_SIZE.txt")
-        return zip_path
+        temporary_path = self.options.output_root / f".{self.options.timestamp}.zip.tmp"
+        if (
+            zip_path.is_symlink()
+            or temporary_path.is_symlink()
+            or (zip_path.exists() and not replace_existing)
+            or temporary_path.exists()
+        ):
+            raise FileExistsError(f"refusing to replace existing archive path: {zip_path}")
+        reported_size = 0
+        for _attempt in range(2):
+            size_text = f"{reported_size:020d}"
+            self.write_text("ARCHIVE_SIZE.txt", f"{zip_path}\n{size_text} bytes\n")
+            mode = "x" if _attempt == 0 else "w"
+            with zipfile.ZipFile(temporary_path, mode, compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+                for path in sorted(self.output_dir.rglob("*")):
+                    if path.is_file():
+                        archive_name = path.relative_to(self.output_dir)
+                        if path.name == "ARCHIVE_SIZE.txt":
+                            marker = zipfile.ZipInfo.from_file(path, archive_name)
+                            marker.compress_type = zipfile.ZIP_STORED
+                            zf.writestr(marker, path.read_bytes())
+                        else:
+                            zf.write(path, archive_name)
+            size = temporary_path.stat().st_size
+            if size > self.options.max_zip_mb * 1024 * 1024:
+                temporary_path.unlink()
+                raise SystemExit(f"archive exceeds {self.options.max_zip_mb}MB")
+            if reported_size == size:
+                temporary_path.replace(zip_path)
+                return zip_path
+            reported_size = size
+        temporary_path.unlink(missing_ok=True)
+        raise RuntimeError("archive size did not stabilize")
 
     def write_review_pack(self) -> None:
         self.write_json("review-pack/checklists.json", build_review_checklists())
@@ -453,12 +628,8 @@ class HostMapper:
         listeners = parse_ss_listeners(outputs.get("runtime/listeners.txt", ""))
         compose_projects = parse_compose_projects(outputs.get("containers/docker.txt", ""))
 
-        routes: list[dict] = []
         unit_names = {item["unit"] for item in systemd_units}
-        if "cloudflared.service" in unit_names and "nginx.service" in unit_names:
-            routes.append({"source": "cloudflared", "target": "nginx.service", "label": "https"})
-        if "cloudflared.service" in unit_names and "caddy.service" in unit_names:
-            routes.append({"source": "cloudflared", "target": "caddy.service", "label": "https"})
+        routes: list[dict] = []
 
         services = {
             "systemd_units": systemd_units,
@@ -472,8 +643,8 @@ class HostMapper:
             {
                 "cloudflare_tunnel": "cloudflared.service" in unit_names,
                 "vpn_tools": {
-                    "wireguard": any(item["port"] == 51820 for item in listeners),
-                    "openvpn": any(item["port"] == 1194 for item in listeners),
+                    "wireguard_default_port_listener": any(item["port"] == 51820 for item in listeners),
+                    "openvpn_default_port_listener": any(item["port"] == 1194 for item in listeners),
                     "tailscale": any("tailscale" in item["unit"] for item in systemd_units),
                 },
                 "listeners": listeners,
@@ -508,17 +679,14 @@ class HostMapper:
                 if secret_name_re.search(member):
                     member_name_findings.append(member)
 
-        suspicious_text_re = re.compile(
-            r"(?i)(password\s*[=:]\s*(?!REDACTED)|secret\s*[=:]\s*(?!REDACTED)|token\s*[=:]\s*(?!REDACTED))"
-        )
         for path in sorted(self.output_dir.rglob("*")):
-            if not path.is_file() or path.suffix == ".zip":
+            if not path.is_file() or path.suffix == ".zip" or path.name == "bundle_qa.json":
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            if suspicious_text_re.search(text):
+            if has_unredacted_secret(text):
                 text_scan_findings.append(str(path.relative_to(self.output_dir)))
 
         self.write_json(
@@ -550,7 +718,7 @@ class HostMapper:
         )
 
     def summary(self) -> str:
-        file_count = len(self.manifest["files"]) + 1
+        file_count = len(self.manifest["files"])
         return (
             "# Hostmap Summary\n\n"
             f"- Generated at: `{self.manifest['generated_at']}`\n"
@@ -581,8 +749,19 @@ def sh_quote(path: Path) -> str:
     return "'" + str(path).replace("'", "'\\''") + "'"
 
 
+def has_unredacted_secret(text: str) -> bool:
+    for line in text.splitlines():
+        if PEM_PRIVATE_KEY_RE.search(line) or URL_CREDENTIAL_RE.search(line) or AUTH_CREDENTIAL_RE.search(line):
+            return True
+        for match in SENSITIVE_ASSIGNMENT_RE.finditer(line):
+            value = match.group("value").strip().strip("\"'")
+            if value and value.casefold() not in {"redacted", "true", "false", "null", "none"}:
+                return True
+    return False
+
+
 def is_small_file(path: Path, limit: int = 512 * 1024) -> bool:
     try:
-        return path.is_file() and path.stat().st_size <= limit
+        return not path.is_symlink() and path.is_file() and path.stat().st_size <= limit
     except OSError:
         return False
