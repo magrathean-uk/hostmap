@@ -1,102 +1,92 @@
 # hostmap
 
-`hostmap` creates a safe, read-only architecture and evidence map of a Linux host. It is intended for operators, reviewers, incident responders, and AI agents that need to understand how a machine is assembled without changing it or collecting raw secrets.
+`hostmap` creates a read-only architecture and evidence map of a Linux host. It collects service, runtime, package, network, filesystem, deployment, and repository metadata into a reviewer bundle while excluding or redacting sensitive content. The project is alpha software. The generated bundle contract has `schema_version: "1.1"`.
 
-Built by [Magrathean UK](https://magrathean.uk). Current project status: **alpha**. The bundle contract is schema v1.1 (`schema_version: "1.1"`).
+Built by [Magrathean UK](https://magrathean.uk).
 
-## Output
+## What it collects
 
-A run produces a timestamped directory containing Markdown, JSON, reviewer prompts, Mermaid diagrams, a manifest, and bundle-quality evidence. It can also create a ZIP archive for offline review.
+A safe run can include:
 
-Typical coverage includes:
+- operating system, kernel, systemd, package-manager, and language-runtime versions;
+- systemd units, failed units, timers, sockets, listeners, processes, cron paths, and filesystem usage;
+- Docker Compose through a detected local Docker socket and Podman through a detected local Podman socket;
+- installed component probes for ingress, VPN, datastores, monitoring, and backup tools;
+- bounded directory maps for selected host roots, with files omitted;
+- redacted small configuration files from selected service directories;
+- Git repository state, recent commit and remote metadata, CI files, deployment files, and selected declared dependencies;
+- structured JSON inventories, Mermaid service graphs, review checklists, and archive quality evidence.
 
-- OS, kernel, package, and language/runtime versions;
-- systemd services, timers, sockets, listeners, processes, cron, and filesystems;
-- Docker Compose and Podman through existing local sockets, plus local Kubernetes/k3s service and version evidence;
-- nginx, Apache, Caddy, Traefik, HAProxy, Cloudflare Tunnel, and VPN tooling;
-- Git repositories, CI definitions, deployment files, and declared dependencies;
-- databases, queues, monitoring, logging, and backup tooling;
-- directory-only filesystem maps with heavy and sensitive paths pruned;
-- structured application, edge, backup, and package inventories;
-- reviewer-friendly service and dependency diagrams.
+Presence is evidence about what was observed. It does not prove that a service, route, backup, firewall, or deployment is healthy or active. A missing collector, unavailable command, permission error, or excluded source is recorded as a gap or unknown where possible.
 
-## Safety model
+## Safety and data handling
 
-`hostmap` inspects host state read-only and writes only its output bundle. It does not restart services, edit source configuration, install packages, change firewall rules, or call external network APIs. It is an architecture and documentation tool, not a vulnerability scanner. Kubernetes cluster queries and remote container contexts are excluded; unavailable local sockets produce gaps in the inventory.
+Host collection is read-only and writes only the requested output bundle. It does not restart services, edit host configuration, install packages, change users or permissions, alter firewall rules, modify containers, or call external network APIs. It is an architecture and documentation tool, not a vulnerability scanner.
 
-Default collection excludes private keys, token files, databases, browser profiles, caches, container stores, build outputs, and large files. Small included configuration files are redacted, including recognized multiline credential blocks. Filesystem walks have depth and entry limits; a bundle is an inventory sample, not an exhaustive filesystem audit. The manifest records commands, collected files, skips, and mode policy.
+The collector excludes secret-looking paths, private keys, token files, credential stores, database files, browser profiles, caches, container stores, build outputs, binary files, and copied input text files larger than 512 KiB. Included small text is redacted for secret-like assignments, URLs with credentials, authorization values, and supported multiline secret blocks. Command output is collected separately and is not subject to the copied-input size limit. Directory maps list directory names only and are bounded by depth and entry limits.
 
-Redaction reduces risk; it does not make an infrastructure inventory public-safe. Generated bundles may still reveal hostnames, topology, service names, software versions, paths, and operational relationships. Review every bundle before sharing it outside the system owner's trust boundary.
+Redaction lowers exposure but does not make a bundle public-safe. Bundles may still contain hostnames, paths, topology, service names, software versions, repository paths, and operational relationships. Review `bundle_qa.json`, `manifest.json`, and the generated files before sharing them outside the system owner's trust boundary.
+
+The collector uses only local container sockets. It does not query remote Docker or Podman contexts, Kubernetes cluster APIs, or k3s cluster APIs. Kubernetes-related output includes `kubectl` client and `k3s` version commands plus local service-unit evidence. Unavailable commands, sockets, or paths remain unknown.
 
 ## Requirements
 
-- Linux host.
-- Python 3.10 or later.
-- Permission to inspect the target machine and its service/configuration metadata.
+- Linux for host collection.
+- Python 3.10 or newer.
+- Permission to inspect the target machine's service and configuration metadata.
 
-Root is not required for the basic run. Additional privileges may expose more inventory; use only the minimum needed and review the resulting bundle accordingly.
+Root is not required for a basic run. Additional privileges can expose more inventory, so use the minimum needed and review the resulting bundle.
 
 ## Install and run
 
-From a checkout:
+From a checkout, run the module directly:
 
 ```bash
 python3 -m hostmap --output hostmap-output --mode safe
 ```
 
-Or install locally:
+The package also exposes the `hostmap` console command after installation:
 
 ```bash
 python3 -m pip install .
 hostmap --output hostmap-output --mode safe
 ```
 
-Modes:
+Collection creates a timestamped directory below the output root and, by default, a sibling ZIP archive. A conflicting timestamped bundle or archive is preserved and causes the run to stop. Use `--no-zip` for a directory-only bundle or `--max-zip-mb N` for a positive archive size limit in MiB.
 
-- `safe` — default; includes redacted small configuration, deployment, and CI files.
-- `paranoid` — versions, runtime snapshots, and directory maps only.
-- `local` — safe mode plus additional local VPN configuration roots, still redacted.
+The available modes are:
 
-The generated archive is named like:
+- `safe` (default): redacted small configs, repository metadata, CI, deployment, and dependency evidence;
+- `paranoid`: versions, runtime snapshots, and directory maps without copied configs or Git metadata;
+- `local`: safe mode plus additional local WireGuard and OpenVPN configuration roots, still redacted.
 
-```text
-hostmap-output/2026-05-20-120000.zip
-```
+`--version` prints the package version. Help, version output, and offline diff work on non-Linux systems; host collection requires Linux.
 
-Existing bundle directories and archives are never replaced. Use `--no-zip` for a directory-only bundle, or `--max-zip-mb 100` to set a positive archive limit in MiB. Collection requires Linux; help, version output, and offline diff also work on other platforms.
+## Bundle contents
 
-## Bundle contract
+Start review with:
 
-Important paths include:
+- `manifest.json`, which records schema, mode policy, commands, files, skips, and redaction policy;
+- `bundle_qa.json`, which records archive-open status and member-name and text-scan findings;
+- `summary.md` and `review-pack/`, which provide orientation and reviewer checklists;
+- `runtime/`, `containers/`, `apps/`, `ingress/`, `edge/`, and `operations/` for structured evidence;
+- `graphs/services.mmd` for a reviewer aid derived from collected service and listener data.
 
-- `manifest.json` — schema version, mode policy, files, commands, and skips;
-- `bundle_qa.json` — archive-open and redaction-scan checks;
-- `review-pack/` — agent context and reviewer role checklists;
-- `apps/services.json` — discovered application and service inventory;
-- `edge/connectivity.json` — ingress, proxy, tunnel, and VPN evidence;
-- `operations/backups.json` — observed backup tooling and configuration evidence;
-- `packages/installed.json` and `packages/declared.json` — package evidence;
-- `graphs/services.mmd` — Mermaid service graph.
+Important structured files include `apps/services.json`, `edge/connectivity.json`, `ingress/routes.json`, `operations/backups.json`, `packages/installed.json`, and, in safe or local mode, `packages/declared.json`. `ingress/routes.json` is currently emitted as an empty route list. VPN default ports are recorded as hints only. Installed ingress tools are not treated as proof of routing. Mermaid graphs summarize evidence and do not replace the raw command outputs.
 
-Presence is evidence, not proof of health. A configured service, backup, firewall, or deployment path may still be stale or broken and must be validated on the target host.
+## Offline bundle diff
 
-Schema v1.1 includes each generated file once in `manifest.json`. In `edge/connectivity.json`, the old `vpn_tools.wireguard` and `vpn_tools.openvpn` flags are now `wireguard_default_port_listener` and `openvpn_default_port_listener`: default ports are hints, not proof of a VPN service. The collector does not infer proxy routes from services merely being installed together. Archive QA describes the completed bundle; review its findings before sharing.
-
-## Offline diff
-
-Compare two existing bundles without touching a live host:
+Compare two complete bundle directories without inspecting a live host:
 
 ```bash
 python3 -m hostmap diff /path/to/before /path/to/after --output hostmap-diff
 ```
 
-`diff.json` reports `added_files`, `removed_files`, `changed_files` (byte changes), and `changed_fields` in manifest metadata. Added or removed metadata keys include `before_present` and `after_present` to distinguish absence from `null`. It does not infer whether a change is operationally significant. Both inputs must be complete bundle directories. The output must be outside both inputs, and existing diff reports are preserved. Older schema-v1 bundles remain readable, including duplicate file references from older collectors.
+The output contains `diff.json` and `summary.md`. The diff reports added and removed manifest files, byte-level changes in files declared by each manifest, and changed manifest fields. Missing versus explicitly `null` fields are distinguished. The output directory must be outside both input bundles. Existing diff reports are never overwritten, and unsafe manifest paths, missing files, symlinks that resolve outside a bundle, and incomplete bundles are rejected. A diff identifies changes; it does not judge operational significance.
 
-## Reviewer prompts and Codex skill
+## Review prompts and skill
 
-Reusable review prompts live in [`docs/prompts.md`](docs/prompts.md). The Codex skill lives at [`skills/hostmap/SKILL.md`](skills/hostmap/SKILL.md).
-
-After copying `skills/hostmap` into a Codex skills directory, a user can ask:
+Reusable prompts are in [`docs/prompts.md`](docs/prompts.md). The Codex skill is in [`skills/hostmap/SKILL.md`](skills/hostmap/SKILL.md). After copying that skill into a supported skills directory, a user can ask:
 
 ```text
 Use the hostmap skill to map this Linux machine safely for review.
@@ -104,14 +94,23 @@ Use the hostmap skill to map this Linux machine safely for review.
 
 ## Development
 
+The project uses the standard Python package layout and pytest. From a checkout:
+
 ```bash
 python3 -m pip install . pytest
 python3 -m pytest -q
 python3 -m hostmap --mode paranoid --output /tmp/hostmap-smoke
 ```
 
-CI checks Python 3.10 and 3.14, the installed CLI, and a Linux paranoid bundle. The dependency security audit fails on reported vulnerabilities or audit errors.
+The paranoid smoke command is intended for a Linux host because collection is Linux-only. It writes a new timestamped bundle below the output root. Existing bundles and archives remain intact.
 
-## Security and licence
+## Project documents
 
-Report security issues through [`SECURITY.md`](./SECURITY.md). `hostmap` is licensed under the [MIT Licence](./LICENSE). Third-party notices are in [`license.md`](./license.md), and trade mark notices are in [`TRADEMARKS.md`](./TRADEMARKS.md).
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Support](SUPPORT.md)
+- [Licence and third-party notices](license.md)
+- [MIT licence text](LICENSE)
+- [Trademark notices](TRADEMARKS.md)
+
+`hostmap` is copyright © 2026 Magrathean UK Ltd. and is licensed under the MIT Licence. See [`license.md`](license.md) for the project and dependency notice.
