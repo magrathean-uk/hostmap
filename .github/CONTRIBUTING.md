@@ -19,7 +19,7 @@ Consider [Clean Development](https://github.com/magrathean-uk/clean-development)
 
 ## Verify a change
 
-Run the test suite for code changes. [AGENTS.md](AGENTS.md) maps modules to focused tests. For a docs-only change, review links and examples and run:
+Run the test suite for code changes. [AGENTS.md](../AGENTS.md) maps modules to focused tests. For a docs-only change, review links and examples and run:
 
 ```sh
 python3 -m pytest -q tests/test_docs_contract.py
@@ -41,7 +41,7 @@ python3 -m hostmap diff /path/to/before /path/to/after --output /tmp/hostmap-dif
 
 For a same-bundle smoke test, pass the same bundle as both inputs and expect no added, removed, or changed files and no changed manifest fields. Diff output must be outside both inputs.
 
-The existing [CI workflow](.github/workflows/ci.yml) runs tests on Python 3.10 and 3.14 and checks a Linux paranoid bundle and same-bundle diff. The [dependency audit workflow](.github/workflows/dependency-audit.yml) runs pip-audit on its installed environment. These describe configured checks, not a guarantee that a particular revision passed.
+The existing [CI workflow](workflows/ci.yml) runs tests on Python 3.10 and 3.14 and checks a Linux paranoid bundle and same-bundle diff. The [dependency audit workflow](workflows/dependency-audit.yml) runs pip-audit on its installed environment. These describe configured checks, not a guarantee that a particular revision passed.
 
 ## Scope and review
 
@@ -51,4 +51,4 @@ The existing [CI workflow](.github/workflows/ci.yml) runs tests on Python 3.10 a
 - Update the schema, tests, README, prompts, and skill together when changing the bundle contract.
 - Describe the problem, the resulting behavior, and checks run in a pull request. State any skipped checks and why they were skipped.
 
-Preserve existing copyright and third-party notices. See [licensing and attribution](license.md) and the complete [MIT licence](LICENSE).
+Preserve existing copyright and third-party notices. See [licensing and attribution](../docs/legal/third-party-notices.md) and the complete [MIT licence](../LICENSE).

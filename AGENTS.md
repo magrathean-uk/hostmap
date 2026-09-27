@@ -1,6 +1,6 @@
 # Working on Hostmap
 
-Hostmap is a Python CLI for Linux host inventories and offline bundle comparison. Use Python 3.10 or newer. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks, and [README.md](README.md) for the user contract.
+Hostmap is a Python CLI for Linux host inventories and offline bundle comparison. Use Python 3.10 or newer. See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for setup and checks, and [README.md](README.md) for the user contract.
 
 Carry authorized work through its relevant checks and make routine local development decisions without repeated confirmation. Use bounded delegation for independent tasks when it helps, with clear file ownership.
 
@@ -12,6 +12,7 @@ Carry authorized work through its relevant checks and make routine local develop
 - Exclude sensitive paths and redact included text. Never treat redaction or a clean QA report as permission to publish a bundle.
 - Keep real hostnames, domains, private paths, credentials, and infrastructure details out of public docs, skills, tests, and fixtures. Use synthetic examples.
 - Preserve existing bundles, archives, and diff reports. Keep generated output and caches out of source changes.
+- Legal files (`LICENSE`, `NOTICE`, `docs/legal/`, contributor terms, copyright and attribution strings) are owner-controlled: change them only on the owner's explicit instruction.
 
 ## Change map
 
@@ -23,7 +24,7 @@ Carry authorized work through its relevant checks and make routine local develop
 | Structured evidence and review | `hostmap/parsers.py`, `hostmap/review_pack.py` | `tests/test_parsers.py`, `tests/test_review_pack.py` |
 | Offline comparison | `hostmap/diffing.py` | `tests/test_diff.py`, `tests/test_cli.py` |
 
-Run `python3 -m pytest -q` for code changes. For collection, CLI routing, bundling, or redaction changes, also run the Linux paranoid smoke and archive checks in [CONTRIBUTING.md](CONTRIBUTING.md). Use an authorized Linux host and report skipped checks plainly. Do not equate fixture tests with live host coverage.
+Run `python3 -m pytest -q` for code changes. For collection, CLI routing, bundling, or redaction changes, also run the Linux paranoid smoke and archive checks in [CONTRIBUTING.md](.github/CONTRIBUTING.md). Use an authorized Linux host and report skipped checks plainly. Do not equate fixture tests with live host coverage.
 
 When the bundle contract changes, reconcile `hostmap/schema.py`, tests, [README.md](README.md), [review prompts](docs/prompts.md), and the [Hostmap skill](skills/hostmap/SKILL.md). Preserve the distinction between observations, hints, and unknowns. Default VPN ports do not establish a service, and co-present proxies do not establish a route.
 

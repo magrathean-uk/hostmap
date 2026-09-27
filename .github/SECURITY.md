@@ -39,7 +39,7 @@ Reachability matters. Include the required permissions, selected mode, and wheth
 
 ## Scope & Safe Harbour
 
-Magrathean UK Ltd. will not pursue a good-faith researcher for security disclosures that:
+MAGRATHEAN UK LTD will not pursue a good-faith researcher for security disclosures that:
 - Target non-production test systems or researcher-owned environments;
 - Avoid persistence, destructive changes, denial of service, and access to personal or customer data;
 - Report promptly and permit reasonable time for remediation;

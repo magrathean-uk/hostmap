@@ -1,6 +1,6 @@
 # Hostmap support
 
-For usage questions and reproducible bugs, use [GitHub issues](https://github.com/magrathean-uk/hostmap/issues). Start with the [README](README.md) and [review prompts](docs/prompts.md).
+For usage questions and reproducible bugs, use [GitHub issues](https://github.com/magrathean-uk/hostmap/issues). Start with the [README](../README.md) and [review prompts](../docs/prompts.md).
 
 Include the Hostmap version (`python3 -m hostmap --version`), Python version, Linux distribution where relevant, collection mode, command used, expected result, and a minimal sanitized example. For offline diff problems, describe both bundles' schema versions and whether all files listed in their manifests are present.
 

@@ -1,8 +1,18 @@
-# hostmap
+<p align="center">
+  <img src="https://raw.githubusercontent.com/magrathean-uk/magrathean-uk/main/assets/icons/hostmap.png" width="96" height="96" alt="">
+</p>
+
+<h1 align="center">hostmap</h1>
+
+<p align="center">Read-only architecture and evidence mapping for a Linux host, with a redacted reviewer bundle.</p>
+
+<p align="center">
+  <a href="docs/index.md">Documentation</a>
+</p>
+
+## Overview
 
 `hostmap` creates a read-only architecture and evidence map of a Linux host. It collects service, runtime, package, network, filesystem, deployment, and repository metadata into a reviewer bundle while excluding or redacting sensitive content. The project is alpha software. The generated bundle contract has `schema_version: "1.1"`.
-
-Built by [Magrathean UK](https://magrathean.uk).
 
 ## What it collects
 
@@ -104,13 +114,19 @@ python3 -m hostmap --mode paranoid --output /tmp/hostmap-smoke
 
 The paranoid smoke command is intended for a Linux host because collection is Linux-only. It writes a new timestamped bundle below the output root. Existing bundles and archives remain intact.
 
-## Project documents
+## Documentation
 
-- [Security policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-- [Support](SUPPORT.md)
-- [Licence and third-party notices](license.md)
-- [MIT licence text](LICENSE)
-- [Trademark notices](TRADEMARKS.md)
+- [Documentation index](docs/index.md)
+- [Review prompts](docs/prompts.md)
+- [Hostmap skill](skills/hostmap/SKILL.md)
+- [Contributing](.github/CONTRIBUTING.md)
+- [Security policy](.github/SECURITY.md)
+- [Support](.github/SUPPORT.md)
+- [Trademark notices](docs/legal/trademarks.md)
+- [Third-party notices](docs/legal/third-party-notices.md)
 
-`hostmap` is copyright © 2026 Magrathean UK Ltd. and is licensed under the MIT Licence. See [`license.md`](license.md) for the project and dependency notice.
+## Licence
+
+hostmap is open source under the MIT licence. See [LICENSE](LICENSE).
+
+<sub>© 2026 MAGRATHEAN UK LTD · [Legal](https://github.com/magrathean-uk/.github/blob/main/LEGAL.md)</sub>

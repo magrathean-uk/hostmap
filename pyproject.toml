@@ -9,7 +9,7 @@ description = "Read-only Linux host architecture mapper for safe reviewer bundle
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Hostmap contributors" }]
+authors = [{ name = "MAGRATHEAN UK LTD" }]
 keywords = ["linux", "architecture", "systemd", "docker", "ops", "documentation"]
 classifiers = [
   "Development Status :: 3 - Alpha",

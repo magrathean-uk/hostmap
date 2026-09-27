@@ -6,7 +6,7 @@ labels: ""
 assignees: ""
 ---
 
-For security defects or suspected secret exposure, follow [SECURITY.md](https://github.com/magrathean-uk/hostmap/blob/main/SECURITY.md). Do not post full host bundles or archives.
+For security defects or suspected secret exposure, follow [SECURITY.md](https://github.com/magrathean-uk/hostmap/blob/main/.github/SECURITY.md). Do not post full host bundles or archives.
 
 ## What happened?
 

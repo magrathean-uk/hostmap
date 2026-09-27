@@ -2,7 +2,7 @@
 
 ## Controlling Licence
 
-Hostmap is licensed under the [MIT License](./LICENSE). The unmodified root `LICENSE` file is the controlling grant. It identifies the copyright holder as Magrathean UK Ltd.
+Hostmap is licensed under the [MIT License](../../LICENSE). The unmodified root `LICENSE` file is the controlling grant. It identifies the copyright holder as MAGRATHEAN UK LTD.
 
 This document explains the repository's current licensing material. It does not add terms or change the rights in `LICENSE`.
 
@@ -14,4 +14,4 @@ The repository does not contain a separate third-party notice bundle. Anyone dis
 
 ## Trade Marks
 
-Trade mark notices are separate from the software licence and are listed in [TRADEMARKS.md](./TRADEMARKS.md).
+Trade mark notices are separate from the software licence and are listed in [trademarks.md](trademarks.md).
