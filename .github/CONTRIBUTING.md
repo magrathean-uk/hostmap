@@ -9,11 +9,12 @@ From a checkout, with Python 3.10 or newer:
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install . pytest
+python3 -m pip install -r requirements-dev.txt
+python3 -m ruff check hostmap tests
 python3 -m pytest -q
 ```
 
-The `hostmap` package has no declared runtime dependencies. Setuptools and wheel are build requirements; pytest is needed for tests. Source-checkout commands use `python3 -m hostmap`.
+The `hostmap` package has no declared runtime dependencies. `requirements-dev.txt` installs it with the supported local pytest and Ruff versions; setuptools and wheel are isolated build requirements from `pyproject.toml`. Ruff selects `E4`, `E7`, `E9`, and `F`, matching Ruff 0.15's default set so newer Ruff defaults do not expand the local gate implicitly. Source-checkout commands use `python3 -m hostmap`.
 
 Consider [Clean Development](https://github.com/magrathean-uk/clean-development) to keep supported development caches and build output organized.
 

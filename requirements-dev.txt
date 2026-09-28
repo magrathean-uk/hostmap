@@ -1,0 +1,4 @@
+# Local package, test, and lint tools; CI workflows remain unchanged.
+.
+pytest>=9.1.1,<10
+ruff>=0.16.9,<0.17

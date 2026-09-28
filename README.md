@@ -104,10 +104,11 @@ Use the hostmap skill to map this Linux machine safely for review.
 
 ## Development
 
-The project uses the standard Python package layout and pytest. From a checkout:
+The project uses the standard Python package layout, pytest, and Ruff. From a checkout:
 
 ```bash
-python3 -m pip install . pytest
+python3 -m pip install -r requirements-dev.txt
+python3 -m ruff check hostmap tests
 python3 -m pytest -q
 python3 -m hostmap --mode paranoid --output /tmp/hostmap-smoke
 ```
