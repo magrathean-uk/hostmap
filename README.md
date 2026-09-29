@@ -55,10 +55,18 @@ From a checkout, run the module directly:
 python3 -m hostmap --output hostmap-output --mode safe
 ```
 
-The package also exposes the `hostmap` console command after installation:
+The package also exposes the `hostmap` console command after installation. Install it into a virtual environment rather than the system or user Python:
 
 ```bash
-python3 -m pip install .
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/hostmap --output hostmap-output --mode safe
+```
+
+Or use [pipx](https://pipx.pypa.io/), which keeps the command in its own isolated environment:
+
+```bash
+pipx install .
 hostmap --output hostmap-output --mode safe
 ```
 
