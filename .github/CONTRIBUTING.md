@@ -16,7 +16,7 @@ python3 -m pytest -q
 
 The `hostmap` package has no declared runtime dependencies. `requirements-dev.txt` installs it with the supported local pytest and Ruff versions; setuptools and wheel are isolated build requirements from `pyproject.toml`. Ruff selects `E4`, `E7`, `E9`, and `F`, matching Ruff 0.15's default set so newer Ruff defaults do not expand the local gate implicitly. Source-checkout commands use `python3 -m hostmap`.
 
-Consider [Clean Development](https://github.com/magrathean-uk/clean-development) to keep supported development caches and build output organized.
+Development in this repository follows [Clean Development](https://github.com/magrathean-uk/clean-development), as [AGENTS.md](../AGENTS.md#clean-development-mandatory) requires. Run the install, lint, and test commands above through it, for example `clean-development run --session session-only -- python3 -m pytest -q`, so tool caches and build output stay out of the home folder.
 
 ## Verify a change
 

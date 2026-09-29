@@ -104,7 +104,7 @@ Use the hostmap skill to map this Linux machine safely for review.
 
 ## Development
 
-The project uses the standard Python package layout, pytest, and Ruff. From a checkout:
+The project uses the standard Python package layout, pytest, and Ruff. From a checkout, inside a virtual environment and run through [Clean Development](https://github.com/magrathean-uk/clean-development) as described in [Contributing](.github/CONTRIBUTING.md):
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
