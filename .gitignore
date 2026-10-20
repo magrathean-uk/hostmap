@@ -10,3 +10,7 @@ dist/
 hostmap-output/
 *.zip
 .DS_Store
+# --- secrets (clean-development) ---
+.env
+.env.*
+!.env.example
